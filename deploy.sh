@@ -3,8 +3,7 @@
 set -eu
 
 DEPLOY_PATH=${1:-.}
-PROJECT=media-embedder-bot
-SERVICE=bot
+CONTAINER=media-embedder-bot
 IMAGE=media-embedder-bot:latest
 ROLLBACK_IMAGE=media-embedder-bot:rollback
 STABILITY_SECONDS=${DEPLOY_STABILITY_SECONDS:-60}
@@ -18,13 +17,29 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-compose() {
-  docker compose -p "$PROJECT" "$@"
+if ! docker version >/dev/null 2>&1; then
+  echo "Docker Engine is required and must be accessible to the deployment user"
+  exit 1
+fi
+
+start_container() {
+  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+  docker run -d \
+    --name "$CONTAINER" \
+    --restart unless-stopped \
+    --env-file .env \
+    --read-only \
+    --init \
+    --security-opt no-new-privileges \
+    --cap-drop ALL \
+    --log-driver json-file \
+    --log-opt max-size=10m \
+    --log-opt max-file=3 \
+    "$IMAGE"
 }
 
-current_container=$(compose ps -q "$SERVICE")
-if [ -n "$current_container" ]; then
-  if ! previous_image=$(docker inspect -f '{{.Image}}' "$current_container"); then
+if docker inspect "$CONTAINER" >/dev/null 2>&1; then
+  if ! previous_image=$(docker inspect -f '{{.Image}}' "$CONTAINER"); then
     echo "Could not identify the currently deployed image"
     exit 1
   fi
@@ -37,28 +52,27 @@ fi
 
 rollback() {
   echo "New deployment failed; collecting logs"
-  compose logs --no-color --tail=100 "$SERVICE" || true
+  docker logs --tail=100 "$CONTAINER" || true
 
   if [ "$rollback_available" -ne 1 ]; then
     echo "No previous image is available; stopping the failed container"
-    compose stop "$SERVICE" || true
+    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
     return 1
   fi
 
   echo "Restoring previous image"
   docker tag "$ROLLBACK_IMAGE" "$IMAGE"
-  if ! compose up -d --no-build --force-recreate --remove-orphans "$SERVICE"; then
+  if ! start_container; then
     echo "Rollback failed while recreating the container"
     return 1
   fi
 
   sleep "$CHECK_INTERVAL"
-  rollback_container=$(compose ps -q "$SERVICE")
-  if [ -z "$rollback_container" ]; then
+  if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
     echo "Rollback container is not running"
     return 1
   fi
-  if ! rollback_running=$(docker inspect -f '{{.State.Running}}' "$rollback_container"); then
+  if ! rollback_running=$(docker inspect -f '{{.State.Running}}' "$CONTAINER"); then
     echo "Could not inspect rollback container"
     return 1
   fi
@@ -76,13 +90,13 @@ deployment_failed() {
 }
 
 echo "Building new image"
-if ! compose build "$SERVICE"; then
+if ! docker build -t "$IMAGE" .; then
   echo "Image build failed; the existing container was not replaced"
   exit 1
 fi
 
 echo "Starting new container"
-if ! compose up -d --no-build --force-recreate --remove-orphans "$SERVICE"; then
+if ! start_container; then
   deployment_failed
 fi
 
@@ -91,17 +105,13 @@ while [ "$elapsed" -lt "$STABILITY_SECONDS" ]; do
   sleep "$CHECK_INTERVAL"
   elapsed=$((elapsed + CHECK_INTERVAL))
 
-  if ! container=$(compose ps -q "$SERVICE"); then
-    echo "Could not inspect the Compose service"
-    deployment_failed
-  fi
-  if [ -z "$container" ]; then
+  if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
     echo "Container disappeared during the stability check"
     deployment_failed
   fi
 
-  if ! running=$(docker inspect -f '{{.State.Running}}' "$container") ||
-    ! restart_count=$(docker inspect -f '{{.RestartCount}}' "$container"); then
+  if ! running=$(docker inspect -f '{{.State.Running}}' "$CONTAINER") ||
+    ! restart_count=$(docker inspect -f '{{.RestartCount}}' "$CONTAINER"); then
     echo "Could not inspect the new container"
     deployment_failed
   fi
@@ -113,5 +123,5 @@ while [ "$elapsed" -lt "$STABILITY_SECONDS" ]; do
   echo "Container stable for ${elapsed}/${STABILITY_SECONDS} seconds"
 done
 
-compose ps
+docker ps --filter "name=^/${CONTAINER}$"
 echo "Deployment completed successfully"

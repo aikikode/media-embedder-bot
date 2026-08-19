@@ -44,15 +44,15 @@ jobs:
           name: Upload application
           command: |
             target="${DEPLOY_USER}@${DEPLOY_HOST}"
-            ssh "$target" "mkdir -p '$DEPLOY_PATH'"
+            ssh "$target" "mkdir -p '$DEPLOY_PATH/ops'"
             scp \
               Dockerfile \
-              compose.yaml \
               deploy.sh \
               bot.py \
               media_urls.py \
               media_services.json \
               "$target:$DEPLOY_PATH/"
+            scp ops/docker-restart.conf "$target:$DEPLOY_PATH/ops/"
       - run:
           name: Deploy and verify bot
           command: |

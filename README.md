@@ -51,8 +51,13 @@ files; the Telegram token stays in the server-side `.env`.
 
 ### Prepare the Hetzner server
 
-Install Docker Engine and the Docker Compose plugin using Docker's official
-instructions. Then create a non-root deployment user and application directory:
+Install Docker Engine, then verify that the deployment user can access it:
+
+```sh
+docker version
+```
+
+Then create the deployment user and application directory:
 
 ```sh
 sudo useradd --create-home --shell /bin/bash deploy
@@ -65,7 +70,48 @@ sudo -u deploy sh -c 'umask 077; printf "%s\n" \
 ```
 
 Log out and back in after adding `deploy` to the `docker` group. Verify that
-`docker version` and `docker compose version` work as that user.
+`docker version` works as that user. The CircleCI deployment uses Docker
+directly and does not require Docker Compose, allowing it to run on legacy
+hosts where the Compose V2 package is unavailable.
+
+### Keep Docker running
+
+Docker already supervises the bot through its `unless-stopped` restart policy.
+Configure systemd to restart the Docker daemon if it crashes:
+
+```sh
+sudo mkdir -p /etc/systemd/system/docker.service.d
+sudo cp ops/docker-restart.conf \
+  /etc/systemd/system/docker.service.d/restart.conf
+sudo systemctl daemon-reload
+sudo systemctl enable docker.service
+sudo systemctl restart docker.service
+```
+
+For additional protection, enable Docker live-restore so running containers
+remain active while the Docker daemon is unavailable. If `/etc/docker/daemon.json`
+does not exist, create it with:
+
+```json
+{
+  "live-restore": true
+}
+```
+
+If that file already exists, add `"live-restore": true` to the existing JSON
+object instead of replacing it. Validate and apply the configuration:
+
+```sh
+sudo dockerd --validate --config-file=/etc/docker/daemon.json
+sudo systemctl restart docker.service
+sudo systemctl is-enabled docker.service
+sudo systemctl is-active docker.service
+```
+
+The `dockerd --validate` option may be unavailable on older Docker releases. In
+that case, validate the JSON with `python -m json.tool /etc/docker/daemon.json`
+before restarting Docker. An application-specific systemd unit is intentionally
+not used because systemd and Docker should not both manage the same container.
 
 ### Configure SSH
 
@@ -102,9 +148,9 @@ In **Project Settings > Environment Variables**, add:
 Add the repository as a CircleCI project and push to `master`. The deploy job
 builds the image on the Hetzner server, requires the new container to run for
 60 seconds without restarting, and restores the previous image if that check
-fails. Use `docker compose -p media-embedder-bot logs -f bot` on the server to
-inspect it. The previous image remains tagged as `media-embedder-bot:rollback`
-for manual recovery.
+fails. Use `docker logs -f media-embedder-bot` on the server to inspect it. The
+previous image remains tagged as `media-embedder-bot:rollback` for manual
+recovery.
 
 ## Supported Links
 
