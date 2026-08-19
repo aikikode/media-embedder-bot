@@ -1,0 +1,71 @@
+version: 2.1
+
+jobs:
+  test:
+    docker:
+      - image: cimg/python:3.13
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Run tests
+          command: python -m unittest discover -v
+      - run:
+          name: Check Python syntax
+          command: python -m compileall -q bot.py media_urls.py tests
+      - run:
+          name: Check deployment script syntax
+          command: sh -n deploy.sh
+
+  deploy:
+    docker:
+      - image: cimg/base:2024.12
+    resource_class: small
+    steps:
+      - checkout
+      - add_ssh_keys: {}
+      - run:
+          name: Configure SSH
+          command: |
+            : "${DEPLOY_HOST:?Set DEPLOY_HOST in CircleCI}"
+            : "${DEPLOY_USER:?Set DEPLOY_USER in CircleCI}"
+            : "${DEPLOY_PATH:?Set DEPLOY_PATH in CircleCI}"
+            : "${DEPLOY_KNOWN_HOSTS:?Set DEPLOY_KNOWN_HOSTS in CircleCI}"
+
+            if [[ ! "$DEPLOY_PATH" =~ ^/[a-zA-Z0-9._/-]+$ ]]; then
+              echo "DEPLOY_PATH must be an absolute path without spaces"
+              exit 1
+            fi
+
+            install -d -m 700 ~/.ssh
+            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+            chmod 600 ~/.ssh/known_hosts
+      - run:
+          name: Upload application
+          command: |
+            target="${DEPLOY_USER}@${DEPLOY_HOST}"
+            ssh "$target" "mkdir -p '$DEPLOY_PATH'"
+            scp \
+              Dockerfile \
+              compose.yaml \
+              deploy.sh \
+              bot.py \
+              media_urls.py \
+              media_services.json \
+              "$target:$DEPLOY_PATH/"
+      - run:
+          name: Deploy and verify bot
+          command: |
+            target="${DEPLOY_USER}@${DEPLOY_HOST}"
+            ssh "$target" "sh '$DEPLOY_PATH/deploy.sh' '$DEPLOY_PATH'"
+
+workflows:
+  test-and-deploy:
+    jobs:
+      - test
+      - deploy:
+          requires:
+            - test
+          filters:
+            branches:
+              only: master

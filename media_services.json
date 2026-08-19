@@ -1,0 +1,27 @@
+[
+  {
+    "name": "Twitter",
+    "source": "^(www\\.)?twitter\\.com",
+    "targets": ["fxtwitter.com", "vxtwitter.com", "fixupx.com"]
+  },
+  {
+    "name": "X",
+    "source": "^(www\\.)?x\\.com",
+    "targets": ["fixupx.com", "fxtwitter.com", "vxtwitter.com"]
+  },
+  {
+    "name": "TikTok",
+    "source": "^(www\\.)?(\\w+\\.)?tiktok\\.com",
+    "targets": ["d.tnktok.com", "kkclip.com", "tnktok.com", "tfxktok.com", "vxtiktok.com"]
+  },
+  {
+    "name": "Reddit",
+    "source": "^(www\\.)?reddit\\.com",
+    "targets": ["vxreddit.com", "rxddit.com"]
+  },
+  {
+    "name": "Instagram",
+    "source": "^(www\\.)?instagram\\.com",
+    "targets": ["kkinstagram.com", "vxinstagram.com"]
+  }
+]
